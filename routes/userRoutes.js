@@ -1,4 +1,5 @@
 import express from "express";
+import { requireAuth } from "../controllers/auth.js";
 
 const router = express.Router();
 
@@ -6,14 +7,11 @@ router.get("/login", (req, res) => {
   res.send("login");
 });
 
-router.get("/protected", (req, res) => {
-  if (req.isAuthenticated()) {
-    res.send("protected");
-  } else {
-    res.status(401).send({ message: "Unauthorized" });
-  }
-  console.log(req.session);
-  console.log(req.user);
+router.get("/protected", requireAuth, (req, res) => {
+  res.json({
+    message: "Protected route",
+    user: req.user,
+  });
 });
 
 router.get("/logout", (req, res, next) => {
