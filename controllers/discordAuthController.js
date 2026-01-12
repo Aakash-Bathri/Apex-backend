@@ -1,7 +1,7 @@
 import passport from "passport";
 import { Strategy as DiscordStrategy } from "passport-discord";
-import jwt from "jsonwebtoken";
-import User from "../config/database.js";
+import { generateToken } from "../utils/jwt.js";
+import { findOrCreateOAuthUser } from "../utils/findOrCreateUser.js";
 
 passport.use(
   new DiscordStrategy(
@@ -13,24 +13,27 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        let user = await User.findOne({ discordId: profile.id });
+        const email = profile.email;
 
-        if (!user) {
-          user = await User.create({
-            discordId: profile.id,
-            name: profile.username,
-            email: profile.email,
-            avatar: `https://cdn.discordapp.com/avatars/${profile.id}/${profile.avatar}.png`,
-          });
+        if (!email) {
+          console.error("No email in Discord profile");
+          return done(new Error("No email provided by Discord"), null);
         }
 
-        const token = jwt.sign(
-          { id: user._id, discordId: profile.id },
-          process.env.JWT_SECRET,
-          { expiresIn: "3d" }
-        );
+        const avatar = profile.avatar
+          ? `https://cdn.discordapp.com/avatars/${profile.id}/${profile.avatar}.png`
+          : null;
 
-        done(null, token);
+        const user = await findOrCreateOAuthUser({
+          email,
+          name: profile.username,
+          avatar,
+          provider: "discord",
+          providerId: profile.id,
+        });
+
+        const token = generateToken(user);
+        done(null, { token });
       } catch (err) {
         done(err, null);
       }
