@@ -1,6 +1,10 @@
 import express from "express";
 import googleAuthRoutes from "./routes/googleAuthRoutes.js";
+import githubAuthRoutes from "./routes/githubAuthRoute.js";
+import discordAuthRoutes from "./routes/discordAuthRoute.js";
 import "./controllers/googleAuthControllers.js";
+import "./controllers/discordAuthController.js";
+import "./controllers/githubAuthController.js";
 import userRoutes from "./routes/userRoutes.js";
 import cors from "cors";
 
@@ -14,6 +18,8 @@ app.use(cors());
 
 // Routes
 app.use("/auth/google", googleAuthRoutes);
+app.use("/auth/github", githubAuthRoutes);
+app.use("/auth/discord", discordAuthRoutes);
 
 app.use("/", userRoutes);
 
