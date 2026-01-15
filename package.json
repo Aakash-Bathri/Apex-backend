@@ -8,6 +8,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon --env-file=.env server.js",
+    "build": "echo \"No build needed for Express backend\"",
     "start": "node --env-file=.env server.js"
   },
   "dependencies": {
