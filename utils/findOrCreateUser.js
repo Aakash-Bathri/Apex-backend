@@ -1,4 +1,5 @@
 import User from "../config/database.js";
+import { UserStats } from "../config/UserStats.js";
 
 export async function findOrCreateOAuthUser({
   email,
@@ -30,7 +31,7 @@ export async function findOrCreateOAuthUser({
 
     if (user) {
       // IMPORTANT: Link this OAuth provider to existing account
-      user[`${provider}Id`] = providerId; // ← This was missing or not working
+      user[`${provider}Id`] = providerId;
       user.name = name || user.name;
       user.avatar = avatar || user.avatar;
       await user.save();
@@ -46,6 +47,10 @@ export async function findOrCreateOAuthUser({
       name,
       avatar,
       [`${provider}Id`]: providerId,
+    });
+
+    await UserStats.create({
+      userId: user._id,
     });
 
     console.log(`Created new user with ${provider}`);

@@ -21,7 +21,7 @@ app.use("/auth/google", googleAuthRoutes);
 app.use("/auth/github", githubAuthRoutes);
 app.use("/auth/discord", discordAuthRoutes);
 
-app.use("/", userRoutes);
+app.use("/api", userRoutes);
 
 app.listen(PORT, (req, res) => {
   console.log(`server is running on ${PORT}`);
