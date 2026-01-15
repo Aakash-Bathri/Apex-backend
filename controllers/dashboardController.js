@@ -22,7 +22,7 @@ export const getDashboard = async (req, res) => {
     ).lean();
 
     // Get Recent Matches (History)
-    console.log(`Fetching matches for user: ${userId}`);
+    // console.log(`Fetching matches for user: ${userId}`);
     const matches = await Game.find({ "players.userId": userId })
       .sort({ endedAt: -1 })
       .limit(20)
@@ -42,7 +42,10 @@ export const getDashboard = async (req, res) => {
       return {
         id: match._id,
         opponent: opponentInfo
-          ? { name: opponentInfo.userId.name, avatar: opponentInfo.userId.avatar }
+          ? {
+              name: opponentInfo.userId.name,
+              avatar: opponentInfo.userId.avatar,
+            }
           : { name: "Unknown", avatar: "" },
         result: playerInfo.result,
         ratingChange: playerInfo.ratingChange,
