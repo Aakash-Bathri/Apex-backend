@@ -1,5 +1,6 @@
 import { Game } from "../config/Game.js";
 import { Question } from "../config/Question.js";
+import { UserStats } from "../config/UserStats.js";
 
 /**
  * Handle Answer Submission
@@ -162,14 +163,36 @@ async function checkGameFinished(io, game) {
             p2.result = "draw";
         }
 
-        // Calc Rating Changes (Placeholder)
-        // const { p1Change, p2Change } = calculateElo(p1.rating, p2.rating, p1.result);
-        // p1.ratingChange = p1Change; ...
+        // Calc Rating Changes
+        const p1Stats = await UserStats.findOne({ userId: p1.userId });
+        const p2Stats = await UserStats.findOne({ userId: p2.userId });
+
+        if (p1Stats && p2Stats) {
+            const p1Rating = p1Stats.overall.rating;
+            const p2Rating = p2Stats.overall.rating;
+
+            // Elo Calculation
+            const { p1Change, p2Change } = calculateElo(p1Rating, p2Rating, p1.result);
+
+            p1.ratingChange = p1Change;
+            p1.newRating = p1Rating + p1Change;
+
+            p2.ratingChange = p2Change;
+            p2.newRating = p2Rating + p2Change;
+
+            // Update DB stats
+            await updateUserStats(p1Stats, p1.result, p1Change, game.topic);
+            await updateUserStats(p2Stats, p2.result, p2Change, game.topic);
+        } else {
+            // Fallback if stats missing (shouldn't happen)
+            p1.ratingChange = 0; p1.newRating = 1000;
+            p2.ratingChange = 0; p2.newRating = 1000;
+        }
 
         await game.save();
 
         io.to(game._id.toString()).emit("game_over", {
-            gameId: game._id,
+            gameId: game._id.toString(), // Fix: Ensure string ID
             winnerId: p1.result === "win" ? p1.userId : (p2.result === "win" ? p2.userId : null),
             results: {
                 [p1.userId]: { score: p1.score, result: p1.result },
@@ -186,4 +209,40 @@ function getUserIdFromSocket(socket) {
     // Ideally socket.handshake.auth.token -> decode -> userId
     // Or we stored it in socket object during connection/join
     return socket.userId; // We need to set this!
+}
+
+// Elo Helper
+function calculateElo(rating1, rating2, result1) {
+    const K = 32;
+    const expected1 = 1 / (1 + Math.pow(10, (rating2 - rating1) / 400));
+
+    let actual1 = 0.5; // Draw
+    if (result1 === "win") actual1 = 1;
+    else if (result1 === "loss") actual1 = 0;
+
+    const change1 = Math.round(K * (actual1 - expected1));
+    // Zero-sum in 1v1 usually, but let's calculate symmetric
+    // In strict Elo, change2 = -change1. 
+    // Let's rely on symmetry for standard Elo.
+
+    return {
+        p1Change: change1,
+        p2Change: -change1
+    };
+}
+
+// Stats Update Helper
+async function updateUserStats(stats, result, ratingChange, topic) {
+    stats.overall.gamesPlayed += 1;
+    stats.overall.rating += ratingChange;
+
+    if (result === "win") stats.overall.wins += 1;
+    else if (result === "loss") stats.overall.losses += 1;
+
+    // Topic Stats (Optional safety check if topic exists in schema keys)
+    if (topic && stats.topics && stats.topics[topic]) {
+        stats.topics[topic].rating = (stats.topics[topic].rating || 1000) + ratingChange;
+    }
+
+    await stats.save();
 }
