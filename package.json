@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "nodemon --env-file=.env server.js",
     "build": "echo \"No build needed for Express backend\"",
-    "start": "node --env-file=.env server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "connect-mongo": "^6.0.0",
