@@ -99,34 +99,74 @@ export const handleSubmitAnswer = async (io, socket, data) => {
             answer,
             isCorrect,
             timeTaken,
+            points, // Store points for retrieval
             submittedAt: new Date()
         });
 
         await game.save();
 
-        // Notify Player of Result (Personal)
-        socket.emit("answer_result", {
-            questionId,
-            isCorrect,
-            points,
-            newScore: player.score
-        });
+        // Check if ALL players answered this question
+        const allPlayersAnsweredCurrent = game.players.every(p =>
+            p.answers.some(a => a.questionId.toString() === questionId)
+        );
 
-        // Notify Opponent of Progress (Blind)
-        const opponent = game.players.find(p => p.userId.toString() !== userId);
-        if (opponent && opponent.socketId) {
-            io.to(opponent.socketId).emit("opponent_progress", {
-                userId,
-                score: player.score, // Maybe hide score? Or show it? Competitive usually shows score.
-                questionIndex: player.answers.length // simplified progress
-            });
+        if (!allPlayersAnsweredCurrent) {
+            // Wait for opponent
+            socket.emit("waiting_for_opponent", { message: "Waiting for opponent..." });
+
+            // Notify opponent that I answered (optional, for UI)
+            const opponent = game.players.find(p => p.userId.toString() !== userId);
+            if (opponent && opponent.socketId) {
+                io.to(opponent.socketId).emit("opponent_answered", { userId });
+            }
+            return;
         }
 
-        // Check Game Completion
-        const allAnswered = player.answers.length === game.questions.length;
-        if (allAnswered) {
-            socket.emit("player_finished", { message: "Waiting for opponent..." });
-            checkGameFinished(io, game);
+        // --- ROUND COMPLETE ---
+
+        // Gather results for this question
+        const roundResults = game.players.map(p => {
+            const ans = p.answers.find(a => a.questionId.toString() === questionId);
+            return {
+                userId: p.userId,
+                answer: ans.answer,
+                isCorrect: ans.isCorrect,
+                points: ans.points,
+                newScore: p.score,
+                timeTaken: ans.timeTaken
+            };
+        });
+
+        // Determine correct answer text for display
+        let correctAnswerText = "";
+        let correctOptionFull = null;
+
+        if (question.type === "MULTIPLE_CHOICE") {
+            const correctOpt = question.options.find(o => o.isCorrect);
+            correctAnswerText = correctOpt ? correctOpt.text : "Error";
+            correctOptionFull = correctOpt;
+        } else {
+            correctAnswerText = question.correctAnswer;
+        }
+
+        // Emit Round Over to Room
+        io.to(game._id.toString()).emit("round_over", {
+            questionId,
+            correctAnswer: correctAnswerText,
+            results: roundResults
+        });
+
+        // Check if Game is FULLY Finished (Last Question)
+        // We know everyone answered the current question. 
+        // Are there more questions?
+        // We can just check if p1.answers.length === totalQuestions.
+        const totalQuestions = game.questions.length;
+        if (player.answers.length >= totalQuestions) {
+            // Delay slightly to let round_over animation play on client? 
+            // Or client handles delay.
+            // We can check game finished immediately.
+            console.log("All questions answered, finishing game...");
+            await checkGameFinished(io, game);
         }
 
     } catch (error) {

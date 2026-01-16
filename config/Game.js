@@ -42,6 +42,10 @@ const GameSchema = new mongoose.Schema(
                         submittedAt: {
                             type: Date,
                             default: Date.now,
+                        },
+                        points: {
+                            type: Number,
+                            default: 0
                         }
                     }
                 ],
