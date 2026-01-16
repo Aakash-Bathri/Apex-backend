@@ -218,7 +218,8 @@ async function createGameSession(io, players, topic, category) {
                 title: q.title,
                 description: q.description,
                 options: q.options.map(o => ({ text: o.text })), // No isCorrect
-                type: q.type
+                type: q.type,
+                timeLimit: q.timeLimit || 60
             })),
             startTime: game.startTime
         });
