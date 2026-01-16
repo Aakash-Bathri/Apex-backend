@@ -26,7 +26,7 @@ export const handleDisconnect = (socket) => {
  * Join the public matchmaking queue
  */
 export const handleJoinQueue = async (io, socket, data) => {
-    const { userId, rating, topic } = data; // topic could be 'RANDOM'
+    const { userId, rating, topic, category = "CS" } = data; // topic could be 'RANDOM'
 
     // Check if I am already in queue (by userId) and update socketId if so
     const existingIndex = publicQueue.findIndex(p => p.userId === userId);
@@ -38,9 +38,9 @@ export const handleJoinQueue = async (io, socket, data) => {
 
     // Try to find a match immediately
     const matchIndex = publicQueue.findIndex(p => {
-        // Simple matching logic: same topic or random, and roughly similar rating (ignore rating for now for speed)
-        // Also ensure we aren't matching with ourselves (though splice above prevents this usually)
-        return (p.topic === topic || topic === "RANDOM" || p.topic === "RANDOM") && p.userId !== userId;
+        // Simple matching logic: same topic or random, same category
+        // Also ensure we aren't matching with ourselves
+        return (p.category === category) && (p.topic === topic || topic === "RANDOM" || p.topic === "RANDOM") && p.userId !== userId;
     });
 
     if (matchIndex !== -1) {
@@ -62,10 +62,10 @@ export const handleJoinQueue = async (io, socket, data) => {
         await createGameSession(io, [
             { userId: userId, socketId: socket.id },
             { userId: opponent.userId, socketId: opponentSocketId }
-        ], topic === "RANDOM" ? opponent.topic : topic);
+        ], topic === "RANDOM" ? opponent.topic : topic, category);
     } else {
         // No match, add to queue
-        publicQueue.push({ userId, socketId: socket.id, rating, topic, joinedAt: Date.now() });
+        publicQueue.push({ userId, socketId: socket.id, rating, topic, category, joinedAt: Date.now() });
         socket.emit("queue_joined", { message: "Waiting for opponent..." });
     }
 };
@@ -84,6 +84,7 @@ export const handleCreatePrivate = async (io, socket, data) => {
             code: code,
             players: [{ userId: userId, socketId: socket.id }],
             topic: topic || "DSA",
+            category: data.category || "CS",
         });
 
         socket.join(game._id.toString());
@@ -143,7 +144,7 @@ export const handleJoinPrivate = async (io, socket, data) => {
         game.startTime = new Date();
 
         // Select Questions
-        const questions = await selectQuestions(game.topic);
+        const questions = await selectQuestions(game.topic, game.category);
         game.questions = questions.map(q => ({ questionId: q._id }));
 
         await game.save();
@@ -181,10 +182,10 @@ export const handleJoinPrivate = async (io, socket, data) => {
 };
 
 // Helper: Create Game Session
-async function createGameSession(io, players, topic) {
+async function createGameSession(io, players, topic, category) {
     try {
         // 1. Select Questions
-        const questions = await selectQuestions(topic);
+        const questions = await selectQuestions(topic, category);
 
         // 2. Create DB Record
         const game = await Game.create({
@@ -192,6 +193,7 @@ async function createGameSession(io, players, topic) {
             status: "IN_PROGRESS",
             players: players.map(p => ({ userId: p.userId, socketId: p.socketId })),
             topic: topic,
+            category: category || "CS",
             questions: questions.map(q => ({ questionId: q._id })),
             startTime: new Date()
         });
@@ -229,15 +231,21 @@ async function createGameSession(io, players, topic) {
 }
 
 // Helper: Select Questions
-async function selectQuestions(topic) {
+async function selectQuestions(topic, category) {
+    console.log(`DEBUG: selectQuestions called with topic=${topic}, category=${category}`);
     const matchStage = { isActive: true };
+    if (category) matchStage.category = category;
     if (topic && topic !== "RANDOM") {
         matchStage.topic = topic;
     }
+
+    console.log("DEBUG: matchStage:", matchStage);
 
     const questions = await Question.aggregate([
         { $match: matchStage },
         { $sample: { size: 3 } } // 3 questions per match
     ]);
+
+    console.log(`DEBUG: Found ${questions.length} questions`);
     return questions;
 }

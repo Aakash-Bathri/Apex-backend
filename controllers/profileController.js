@@ -24,24 +24,40 @@ export const getProfileByUsername = async (req, res) => {
         ).lean();
 
         // Get Recent Matches (History)
-        const matches = await Game.find({ "players.userId": userId })
-            .sort({ endedAt: -1 })
+        const matches = await Game.find({
+            "players.userId": userId,
+            status: "FINISHED"
+        })
+            .sort({ endTime: -1 }) // Fixed: sort by endTime
             .limit(20)
             .populate("players.userId", "name avatar")
             .lean();
 
         // Format matches for frontend
         const formattedMatches = matches.map((match) => {
-            const playerInfo = match.players.find(
-                (p) => p.userId._id.toString() === userId.toString()
-            );
-            const opponentInfo = match.players.find(
-                (p) => p.userId._id.toString() !== userId.toString()
-            );
+            // Safe find for self
+            const playerInfo = match.players.find((p) => {
+                return (
+                    p.userId &&
+                    p.userId._id &&
+                    p.userId._id.toString() === userId.toString()
+                );
+            });
+
+            // Safe find for opponent
+            const opponentInfo = match.players.find((p) => {
+                return (
+                    p.userId &&
+                    p.userId._id &&
+                    p.userId._id.toString() !== userId.toString()
+                );
+            });
+
+            if (!playerInfo) return null;
 
             return {
                 id: match._id,
-                opponent: opponentInfo
+                opponent: opponentInfo && opponentInfo.userId
                     ? {
                         name: opponentInfo.userId.name,
                         avatar: opponentInfo.userId.avatar,
@@ -49,10 +65,10 @@ export const getProfileByUsername = async (req, res) => {
                     : { name: "Unknown", avatar: "" },
                 result: playerInfo.result,
                 ratingChange: playerInfo.ratingChange,
-                topic: match.topic,
-                date: match.endedAt,
+                topic: `CS-${match.topic === "RANDOM" ? "ALL" : match.topic}`, // CS-ALL or CS-DSA
+                date: match.endTime, // Fixed: use endTime
             };
-        });
+        }).filter(m => m !== null);
 
         // Generate Rating History for Graph
         const ratingHistory = matches
@@ -61,7 +77,7 @@ export const getProfileByUsername = async (req, res) => {
                     (p) => p.userId._id.toString() === userId.toString()
                 );
                 return {
-                    date: match.endedAt,
+                    date: match.endTime, // Fixed: use endTime
                     rating: playerInfo.newRating,
                 };
             })

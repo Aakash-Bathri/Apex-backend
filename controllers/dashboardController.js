@@ -22,9 +22,12 @@ export const getDashboard = async (req, res) => {
     ).lean();
 
     // Get Recent Matches (History)
-    // console.log(`Fetching matches for user: ${userId}`);
-    const matches = await Game.find({ "players.userId": userId })
-      .sort({ endedAt: -1 })
+    // Only fetch FINISHED matches to ensure valid opponent data
+    const matches = await Game.find({
+      "players.userId": userId,
+      status: "FINISHED",
+    })
+      .sort({ endTime: -1 }) // Fixed: sort by endTime as endedAt doesn't exist
       .limit(20)
       .populate("players.userId", "name avatar") // basic info of opponent
       .lean();
@@ -32,27 +35,52 @@ export const getDashboard = async (req, res) => {
 
     // Format matches for frontend
     const formattedMatches = matches.map((match) => {
-      const playerInfo = match.players.find(
-        (p) => p.userId._id.toString() === userId.toString()
-      );
-      const opponentInfo = match.players.find(
-        (p) => p.userId._id.toString() !== userId.toString()
-      );
+      // Safe find for self
+      const playerInfo = match.players.find((p) => {
+        return (
+          p.userId &&
+          p.userId._id &&
+          p.userId._id.toString() === userId.toString()
+        );
+      });
+
+      // Safe find for opponent (anyone who is NOT me)
+      const opponentInfo = match.players.find((p) => {
+        return (
+          p.userId &&
+          p.userId._id &&
+          p.userId._id.toString() !== userId.toString()
+        );
+      });
+
+      // Debug log for troubleshooting "Unknown" issue
+      if (!opponentInfo) {
+        console.log(
+          `[Dashboard] Match ${match._id}: Opponent missing. Players:`,
+          match.players.map((p) => ({
+            id: p.userId ? p.userId._id : "null",
+            name: p.userId ? p.userId.name : "null",
+          }))
+        );
+      }
+
+      // If for some reason playerInfo is missing (shouldn't happen if query used userId), skip or handle
+      if (!playerInfo) return null;
 
       return {
         id: match._id,
-        opponent: opponentInfo
+        opponent: opponentInfo && opponentInfo.userId
           ? {
-              name: opponentInfo.userId.name,
-              avatar: opponentInfo.userId.avatar,
-            }
+            name: opponentInfo.userId.name || "Unknown",
+            avatar: opponentInfo.userId.avatar || "",
+          }
           : { name: "Unknown", avatar: "" },
         result: playerInfo.result,
         ratingChange: playerInfo.ratingChange,
-        topic: match.topic,
-        date: match.endedAt,
+        topic: `CS-${match.topic === "RANDOM" ? "ALL" : match.topic}`,
+        date: match.endTime, // Fixed: use endTime instead of endedAt
       };
-    });
+    }).filter(match => match !== null);
 
     // Generate Rating History for Graph
     // (This is a simplified approach: we take the 'newRating' from each game)
@@ -63,7 +91,7 @@ export const getDashboard = async (req, res) => {
           (p) => p.userId._id.toString() === userId.toString()
         );
         return {
-          date: match.endedAt,
+          date: match.endTime, // Fixed: use endTime
           rating: playerInfo.newRating,
         };
       })

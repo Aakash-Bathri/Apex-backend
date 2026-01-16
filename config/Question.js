@@ -19,7 +19,12 @@ const QuestionSchema = new mongoose.Schema(
         topic: {
             type: String,
             required: true,
-            enum: ["DSA", "OOPS", "OS", "DBMS", "CN"],
+            enum: ["DSA", "OOPS", "OS", "DBMS", "CN", "Digital", "Analog", "Signals", "COA", "C_Prog"],
+        },
+        category: {
+            type: String,
+            default: "CS", // Default main category
+            required: true,
         },
         type: {
             type: String,

@@ -29,6 +29,9 @@ app.use("/auth/google", googleAuthRoutes);
 app.use("/auth/github", githubAuthRoutes);
 app.use("/auth/discord", discordAuthRoutes);
 
+import adminRoutes from "./routes/adminRoutes.js";
+app.use("/api/admin", adminRoutes);
+
 app.use("/api", userRoutes);
 app.use("/api/game", gameRoutes);
 

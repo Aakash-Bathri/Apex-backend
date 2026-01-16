@@ -67,6 +67,11 @@ const GameSchema = new mongoose.Schema(
             type: String,
             required: true,
         },
+        category: {
+            type: String,
+            default: "CS",
+            required: true,
+        },
         questions: [
             {
                 questionId: {
