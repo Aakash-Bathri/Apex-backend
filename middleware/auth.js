@@ -16,9 +16,12 @@ export const requireAuth = (req, res, next) => {
       email: decoded.email,
     };
 
+    console.log(`[Auth] Token verified for user: ${decoded.email} (${decoded.id})`);
     next();
   } catch (err) {
-    console.error("Auth error:", err);
+    console.error(`[Auth] verification failed:`, err.message);
+    const authHeader = req.headers.authorization;
+    console.error(`[Auth] Header was: ${authHeader ? authHeader.substring(0, 20) + '...' : 'Missing'}`);
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 };

@@ -12,9 +12,10 @@ router.get(
   "/callback",
   passport.authenticate("google", { session: false }),
   (req, res) => {
-    res.redirect(
-      `${process.env.FRONTEND_URL}/oauth-success?token=${req.user.token}`
-    );
+    const token = req.user.token;
+    const redirectUrl = `${process.env.FRONTEND_URL}/oauth-success?token=${token}`;
+    console.log(`[GoogleAuth] Authenticated user. Redirecting to: ${redirectUrl}`);
+    res.redirect(redirectUrl);
   }
 );
 

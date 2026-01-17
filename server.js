@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import passport from "passport";
 import googleAuthRoutes from "./routes/googleAuthRoutes.js";
 import githubAuthRoutes from "./routes/githubAuthRoute.js";
 import discordAuthRoutes from "./routes/discordAuthRoute.js";
@@ -28,6 +29,7 @@ app.set("trust proxy", 1); // Trust first key, which is the Nginx proxy
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(helmet());
+app.use(passport.initialize());
 
 // Rate limiting: 300 requests per 15 minutes
 const limiter = rateLimit({
@@ -37,8 +39,23 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 app.use(limiter);
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://apex-play.app",
+  "https://www.apex-play.app",
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:5173",
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log("Blocked by CORS:", origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 
