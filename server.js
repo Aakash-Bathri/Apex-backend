@@ -12,6 +12,7 @@ import cors from "cors";
 
 import http from "http";
 import { initSocket } from "./services/socketService.js";
+import "./config/database.js"; // Initialize MongoDB connection
 
 const PORT = process.env.PORT || 8000;
 

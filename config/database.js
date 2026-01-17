@@ -1,8 +1,10 @@
 import mongoose from "mongoose";
 
-mongoose.connect("mongodb://localhost:27017/passport-google")
-    .then(() => console.log("MongoDB connected"))
-    .catch(err => console.error("MongoDB connection error:", err));
+const dbUrl = process.env.DATABASE_URL || process.env.MONGO_URI || "mongodb://localhost:27017/passport-google";
+
+mongoose.connect(dbUrl)
+  .then(() => console.log(`✅ MongoDB connected to ${dbUrl}`))
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 const userSchema = new mongoose.Schema(
   {
