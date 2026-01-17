@@ -9,6 +9,8 @@ import "./controllers/githubAuthController.js";
 import userRoutes from "./routes/userRoutes.js";
 import gameRoutes from "./routes/gameRoutes.js";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 
 import http from "http";
 import { initSocket } from "./services/socketService.js";
@@ -22,8 +24,19 @@ const server = http.createServer(app);
 // Initialize Socket.io
 initSocket(server);
 
+app.set("trust proxy", 1); // Trust first key, which is the Nginx proxy
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(helmet());
+
+// Rate limiting: 300 requests per 15 minutes
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+});
+app.use(limiter);
 app.use(cors({
   origin: process.env.FRONTEND_URL || "http://localhost:5173",
   credentials: true
