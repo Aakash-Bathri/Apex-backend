@@ -359,7 +359,7 @@ async function selectQuestions(topic, category) {
 
     const questions = await Question.aggregate([
         { $match: matchStage },
-        { $sample: { size: 3 } } // 3 questions per match
+        { $sample: { size: 7 } } // 7 questions per match
     ]);
 
     console.log(`DEBUG: Found ${questions.length} questions`);
