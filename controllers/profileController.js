@@ -9,7 +9,7 @@ export const getProfileByUsername = async (req, res) => {
         // Find user by username (case-insensitive)
         const user = await User.findOne({
             name: { $regex: new RegExp(`^${username}$`, 'i') }
-        }).select("name email avatar createdAt");
+        }).select("name avatar createdAt");
 
         if (!user) {
             return res.status(404).json({ message: "User not found" });

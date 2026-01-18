@@ -42,7 +42,7 @@ const QuestionSchema = new mongoose.Schema(
         explanation: String, // Why this answer is correct
         timeLimit: {
             type: Number,
-            default: 60, // seconds
+            default: 30, // seconds
         },
         points: {
             type: Number,

@@ -78,9 +78,10 @@ const GameSchema = new mongoose.Schema(
                     type: mongoose.Schema.Types.ObjectId,
                     ref: "Question",
                 },
-                // We might denormalize strict time limits here if we want per-game overrides
+                timeLimit: Number, // Persist dynamic limit (15/20/25)
             }
         ],
+        currentRoundStartTime: { type: Date, default: Date.now },
         startTime: Date,
         endTime: Date,
         abortReason: String,

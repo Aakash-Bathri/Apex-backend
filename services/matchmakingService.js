@@ -3,6 +3,7 @@ import { Question } from "../config/Question.js";
 import crypto from "crypto";
 
 import { connectedUsers } from "./socketService.js";
+import { getQuestionTimeLimit } from "../utils/gameRules.js";
 
 // In-memory queue: { userId, socketId, rating, topic, joinedAt }
 const publicQueue = [];
@@ -20,6 +21,65 @@ export const handleDisconnect = (socket) => {
 };
 
 /**
+ * Helper: Remove user from queue by userId
+ */
+const removeFromQueue = (userId) => {
+    const index = publicQueue.findIndex(p => p.userId === userId);
+    if (index !== -1) {
+        console.log(`Removing user ${userId} from queue (cleanup)`);
+        publicQueue.splice(index, 1);
+        return true;
+    }
+    return false;
+};
+
+/**
+ * Helper: Abort any active games for a user
+ */
+const abortActiveGames = async (io, userId) => {
+    try {
+        // Find all IN_PROGRESS games where this user is a player
+        const activeGames = await Game.find({
+            "players.userId": userId,
+            status: "IN_PROGRESS"
+        });
+
+        for (const game of activeGames) {
+            console.log(`Aborting game ${game._id} for user ${userId}`);
+
+            // Update game status
+            game.status = "ABORTED";
+            game.abortReason = `Player ${userId} abandoned the game`;
+            game.endTime = new Date();
+            await game.save();
+
+            // CRITICAL FIX: Remove ALL players from this aborted game from the queue
+            // This prevents them from immediately rematching each other
+            game.players.forEach(player => {
+                const playerId = player.userId.toString();
+                removeFromQueue(playerId);
+                console.log(`Removed player ${playerId} from queue (game aborted)`);
+            });
+
+            // Notify all players in the game room
+            io.to(game._id.toString()).emit("game_aborted", {
+                message: "Your opponent has left the game",
+                gameId: game._id.toString()
+            });
+
+            // Remove players from socket room
+            const sockets = await io.in(game._id.toString()).fetchSockets();
+            sockets.forEach(s => s.leave(game._id.toString()));
+        }
+
+        return activeGames.length;
+    } catch (error) {
+        console.error("Error aborting active games:", error);
+        return 0;
+    }
+};
+
+/**
  * Join the public matchmaking queue
  */
 /**
@@ -27,6 +87,9 @@ export const handleDisconnect = (socket) => {
  */
 export const handleJoinQueue = async (io, socket, data) => {
     const { userId, rating, topic, category = "CS" } = data; // topic could be 'RANDOM'
+
+    // Abort any active games before joining queue
+    await abortActiveGames(io, userId);
 
     // Check if I am already in queue (by userId) and update socketId if so
     const existingIndex = publicQueue.findIndex(p => p.userId === userId);
@@ -75,6 +138,10 @@ export const handleJoinQueue = async (io, socket, data) => {
  */
 export const handleCreatePrivate = async (io, socket, data) => {
     const { userId, topic } = data;
+
+    // Abort any active games before creating new one
+    await abortActiveGames(io, userId);
+
     const code = crypto.randomBytes(3).toString("hex").toUpperCase(); // 6 chars
 
     try {
@@ -104,6 +171,9 @@ export const handleCreatePrivate = async (io, socket, data) => {
  */
 export const handleJoinPrivate = async (io, socket, data) => {
     const { userId, code } = data;
+
+    // Abort any active games before joining private game
+    await abortActiveGames(io, userId);
 
     try {
         const game = await Game.findOne({ code: code, status: "WAITING" });
@@ -184,6 +254,9 @@ export const handleJoinPrivate = async (io, socket, data) => {
 // Helper: Create Game Session
 async function createGameSession(io, players, topic, category) {
     try {
+        // Safety: Remove both players from queue (in case of race conditions or stale entries)
+        players.forEach(p => removeFromQueue(p.userId));
+
         // 1. Select Questions
         const questions = await selectQuestions(topic, category);
 
@@ -195,7 +268,8 @@ async function createGameSession(io, players, topic, category) {
             topic: topic,
             category: category || "CS",
             questions: questions.map(q => ({ questionId: q._id })),
-            startTime: new Date()
+            startTime: new Date(),
+            currentRoundStartTime: new Date()
         });
 
         const gameId = game._id.toString();
@@ -219,7 +293,7 @@ async function createGameSession(io, players, topic, category) {
                 description: q.description,
                 options: q.options.map(o => ({ text: o.text })), // No isCorrect
                 type: q.type,
-                timeLimit: q.timeLimit || 60
+                timeLimit: getQuestionTimeLimit(q.difficulty) || 30
             })),
             startTime: game.startTime
         });

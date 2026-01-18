@@ -1,121 +1,122 @@
 import { Game } from "../config/Game.js";
 import { Question } from "../config/Question.js";
 import { UserStats } from "../config/UserStats.js";
+import { getQuestionTimeLimit } from "../utils/gameRules.js";
+import mongoose from "mongoose";
 
 /**
  * Handle Answer Submission
  */
 export const handleSubmitAnswer = async (io, socket, data) => {
-    const { gameId, questionId, answer, timeTaken } = data; // answer: index or text
-    const userId = getUserIdFromSocket(socket); // Need a way to map socket to user
+    const { gameId, questionId, answer } = data; // Ignore client's timeTaken
+    const userId = getUserIdFromSocket(socket);
 
-    if (!userId) return; // Should not happen if auth middleware works or we track mapping
+    if (!userId) return;
 
     try {
-        console.log(`Submit Answer: Game ${gameId}, User ${userId}, Q: ${questionId}, Ans: ${answer}`);
-        const game = await Game.findById(gameId);
-        if (!game || game.status !== "IN_PROGRESS") {
-            console.log("Game invalid or not in progress");
+        // 1. Fetch Game Metadata (Non-atomic for reading state)
+        // We need question details to validate answer and calculating points.
+        // We can still use findById for reading, but updates must be atomic.
+        // Or we can assume game state is valid and just update.
+        // However, we need to know IF the answer is correct to calculate score.
+
+        const gameRead = await Game.findById(gameId).select("status currentRoundStartTime players questions topic category");
+        if (!gameRead || gameRead.status !== "IN_PROGRESS") {
             return socket.emit("error", { message: "Game not active" });
         }
 
-        const player = game.players.find(p => p.userId.toString() === userId);
-        if (!player) {
-            console.log("Player not found in game");
-            return socket.emit("error", { message: "Player not found" });
-        }
-
-        // Check if already answered
-        const existingAnswer = player.answers.find(a => a.questionId.toString() === questionId);
-        if (existingAnswer) {
-            console.log("Already answered - resending result");
-            // Re-emit the result so frontend can recover if it missed the first packet
-            // We need to calculate points again or store them? 
-            // We stored score, but not per-question points in the array (only total score updated).
-            // But we stored isCorrect. We can roughly estimate points or just send isCorrect + current total score.
-            // Currently frontend uses points for display, newScore for state.
-
-            // Re-calculate points roughly or just send what stored?
-            // We stored: answer, isCorrect, timeTaken.
-            // Let's re-calculate points for consistency in display
-            let points = 0;
-            if (existingAnswer.isCorrect) {
-                const question = await Question.findById(questionId);
-                const timeLimit = question.timeLimit || 60;
-                const bonus = Math.max(0, ((timeLimit - existingAnswer.timeTaken) / timeLimit) * 50);
-                points = 100 + Math.round(bonus);
-            } else {
-                points = -20;
-            }
-
-            return socket.emit("answer_result", {
-                questionId,
-                isCorrect: existingAnswer.isCorrect,
-                points,
-                newScore: player.score // Current total score
-            });
-        }
-
-        // Validate Answer
+        // 2. Validate Question & Calculate Server-Side Time
         const question = await Question.findById(questionId);
         if (!question) {
-            console.log("Question not found in DB");
             return socket.emit("error", { message: "Question not found" });
         }
 
-        let isCorrect = false;
+        const now = new Date();
+        const startTime = gameRead.currentRoundStartTime || now; // Fallback
+        const serverTimeTakenRaw = (now - startTime) / 1000; // seconds
+        const timeLimit = getQuestionTimeLimit(question.difficulty);
 
+        // Clamp timeTaken (can't be negative, max at limit + buffer)
+        const timeTaken = Math.min(Math.max(0, serverTimeTakenRaw), timeLimit);
+
+        // 3. Check Answer Validity
+        let isCorrect = false;
         if (question.type === "MULTIPLE_CHOICE") {
             const correctOption = question.options.find(o => o.isCorrect);
-            if (!correctOption) {
-                console.error(`Question ${questionId} has no correct option!`);
-                // Fallback or error?
-                isCorrect = false;
-            } else {
-                // Compare trimmed strings to be safe
+            if (correctOption) {
                 isCorrect = (correctOption.text || "").trim() === (answer || "").trim();
             }
         } else {
             isCorrect = question.correctAnswer === answer;
         }
 
-        console.log(`Answer Validated: ${isCorrect} (Expected: ${question.correctAnswer || "Check Options"}, Got: ${answer})`);
-
-        // Calculate Score
-        // Base 100 + Time Bonus (up to 50)
+        // 4. Calculate Points
         let points = 0;
         if (isCorrect) {
-            const timeLimit = question.timeLimit || 60;
             const bonus = Math.max(0, ((timeLimit - timeTaken) / timeLimit) * 50);
             points = 100 + Math.round(bonus);
         } else {
-            points = -20; // Penalty
+            points = -20;
         }
 
-        // Update State
-        player.score += points;
-        player.answers.push({
-            questionId,
-            answer,
-            isCorrect,
-            timeTaken,
-            points, // Store points for retrieval
-            submittedAt: new Date()
-        });
+        console.log(`[Submit] User: ${userId}, Q: ${questionId}, Valid: ${isCorrect}, Time: ${timeTaken}s, Pts: ${points}`);
 
-        await game.save();
+        // 5. ATOMIC UPDATE
+        // Use findOneAndUpdate to push answer and update score ONLY if not already answered
+        const updatedGame = await Game.findOneAndUpdate(
+            {
+                _id: new mongoose.Types.ObjectId(gameId),
+                players: {
+                    $elemMatch: {
+                        userId: new mongoose.Types.ObjectId(userId),
+                        "answers.questionId": { $ne: new mongoose.Types.ObjectId(questionId) }
+                    }
+                }
+            },
+            {
+                $inc: { "players.$.score": points },
+                $push: {
+                    "players.$.answers": {
+                        questionId,
+                        answer,
+                        isCorrect,
+                        timeTaken,
+                        points,
+                        submittedAt: now
+                    }
+                }
+            },
+            { new: true } // Return updated doc
+        );
 
-        // Check if ALL players answered this question
-        const allPlayersAnsweredCurrent = game.players.every(p =>
+        if (!updatedGame) {
+            // Either game/player not found OR already answered
+            // Check if already answered to resend result
+            const freshGame = await Game.findById(gameId);
+            const player = freshGame.players.find(p => p.userId.toString() === userId);
+            const existingAnswer = player.answers.find(a => a.questionId.toString() === questionId);
+
+            if (existingAnswer) {
+                console.log("Already answered (atomic check) - resending");
+                return socket.emit("answer_result", {
+                    questionId,
+                    isCorrect: existingAnswer.isCorrect,
+                    points: existingAnswer.points,
+                    newScore: player.score
+                });
+            } else {
+                return socket.emit("error", { message: "Update failed (Game not active or Player missing)" });
+            }
+        }
+
+        // 6. Check Round Completion (using updatedGame)
+        const allPlayersAnsweredCurrent = updatedGame.players.every(p =>
             p.answers.some(a => a.questionId.toString() === questionId)
         );
 
         if (!allPlayersAnsweredCurrent) {
-            // Wait for opponent
             socket.emit("waiting_for_opponent", { message: "Waiting for opponent..." });
-
-            // Notify opponent that I answered (optional, for UI)
-            const opponent = game.players.find(p => p.userId.toString() !== userId);
+            const opponent = updatedGame.players.find(p => p.userId.toString() !== userId);
             if (opponent && opponent.socketId) {
                 io.to(opponent.socketId).emit("opponent_answered", { userId });
             }
@@ -124,8 +125,8 @@ export const handleSubmitAnswer = async (io, socket, data) => {
 
         // --- ROUND COMPLETE ---
 
-        // Gather results for this question
-        const roundResults = game.players.map(p => {
+        // Prepare Round Stats
+        const roundResults = updatedGame.players.map(p => {
             const ans = p.answers.find(a => a.questionId.toString() === questionId);
             return {
                 userId: p.userId,
@@ -137,59 +138,75 @@ export const handleSubmitAnswer = async (io, socket, data) => {
             };
         });
 
-        // Determine correct answer text for display
-        let correctAnswerText = "";
-        let correctOptionFull = null;
-
+        // Get Correct Answer Text
+        let correctAnswerText = question.correctAnswer;
         if (question.type === "MULTIPLE_CHOICE") {
             const correctOpt = question.options.find(o => o.isCorrect);
-            correctAnswerText = correctOpt ? correctOpt.text : "Error";
-            correctOptionFull = correctOpt;
-        } else {
-            correctAnswerText = question.correctAnswer;
+            if (correctOpt) correctAnswerText = correctOpt.text;
         }
 
-        // Emit Round Over to Room
-        io.to(game._id.toString()).emit("round_over", {
+        // Emit Round Over
+        io.to(gameId).emit("round_over", {
             questionId,
             correctAnswer: correctAnswerText,
-            results: roundResults
+            results: roundResults,
+            nextRoundStartTime: new Date(Date.now() + 5000) // Expect next Q in 5s
         });
 
-        // Check if Game is FULLY Finished (Last Question)
-        // We know everyone answered the current question. 
-        // Are there more questions?
-        // We can just check if p1.answers.length === totalQuestions.
-        const totalQuestions = game.questions.length;
-        if (player.answers.length >= totalQuestions) {
-            // Delay slightly to let round_over animation play on client? 
-            // Or client handles delay.
-            // We can check game finished immediately.
-            console.log("All questions answered, finishing game...");
-            await checkGameFinished(io, game);
+        // 7. Check Game Over or Schedule Next Round Start
+        // We know round is over.
+        // If there are more questions, we should PREPARE the next round start time.
+        // Does client trigger next question request? Or do we Auto-Start?
+        // Match.tsx waits 5s then increments index.
+        // We should explicitly set currentRoundStartTime for the NEXT question now (after 5s delay?).
+        // Actually, we can just set it to Date.now() + 5000 approx, or update it when the first player *requests*?
+        // Better: Update it immediately to "Now + 5s" so when they start submitting for next Q, the start time is correct.
+
+        const totalQuestions = updatedGame.questions.length;
+        const p1Answers = updatedGame.players[0].answers.length;
+
+        if (p1Answers >= totalQuestions) {
+            console.log("Game Finishing...");
+            await checkGameFinished(io, updatedGame);
+        } else {
+            // Setup next round time (approximate, since client waits 5s)
+            // We set it to Now + 5s (Review Time)
+            await Game.findByIdAndUpdate(gameId, {
+                currentRoundStartTime: new Date(Date.now() + 5000)
+            });
         }
 
     } catch (error) {
         console.error("Submit Answer Error:", error);
-        socket.emit("error", { message: "Server error processing answer: " + error.message });
+        socket.emit("error", { message: "Server error: " + error.message });
     }
 };
 
 /**
  * Check if game should finish
  */
+/**
+ * Check if game should finish
+ */
 async function checkGameFinished(io, game) {
+    // We already have the 'game' object from the previous call, but to be SAFE against race conditions
+    // we should re-fetch or rely on the fact that we just did an atomic update.
+    // However, for setting STATUS to FINISHED, we should simply use atomic update again to ensure we don't overwrite others.
+
+    // Instead of reading, modifying, and saving, we will:
+    // 1. Fetch latest state (or rely on passed 'game' if we trust it's recent enough)
+    // 2. Perform atomic set if not already finished.
+
+    // Let's rely on the passed 'game' which came from findOneAndUpdate, so it is latest.
     const p1 = game.players[0];
     const p2 = game.players[1];
 
     const p1Done = p1.answers.length === game.questions.length;
     const p2Done = p2.answers.length === game.questions.length;
 
-    if (p1Done && p2Done) {
-        game.status = "FINISHED";
-        game.endTime = new Date();
+    if (p1Done && p2Done && game.status !== "FINISHED") {
 
-        // Determine Winner
+        // Determine Winner Logic (Same as before)
         if (p1.score > p2.score) {
             p1.result = "win";
             p2.result = "loss";
@@ -197,8 +214,6 @@ async function checkGameFinished(io, game) {
             p2.result = "win";
             p1.result = "loss";
         } else {
-            // Tie breaker: Total time taken?
-            // For now, draw
             p1.result = "draw";
             p2.result = "draw";
         }
@@ -207,32 +222,44 @@ async function checkGameFinished(io, game) {
         const p1Stats = await UserStats.findOne({ userId: p1.userId });
         const p2Stats = await UserStats.findOne({ userId: p2.userId });
 
+        // Defaults
+        let p1Change = 0, p2Change = 0;
+        let p1NewRating = 1000, p2NewRating = 1000;
+
         if (p1Stats && p2Stats) {
-            const p1Rating = p1Stats.overall.rating;
-            const p2Rating = p2Stats.overall.rating;
-
-            // Elo Calculation
-            const { p1Change, p2Change } = calculateElo(p1Rating, p2Rating, p1.result);
-
-            p1.ratingChange = p1Change;
-            p1.newRating = p1Rating + p1Change;
-
-            p2.ratingChange = p2Change;
-            p2.newRating = p2Rating + p2Change;
+            const elo = calculateElo(p1Stats.overall.rating, p2Stats.overall.rating, p1.result);
+            p1Change = elo.p1Change;
+            p2Change = elo.p2Change;
+            p1NewRating = p1Stats.overall.rating + p1Change;
+            p2NewRating = p2Stats.overall.rating + p2Change;
 
             // Update DB stats
             await updateUserStats(p1Stats, p1.result, p1Change, game.topic);
             await updateUserStats(p2Stats, p2.result, p2Change, game.topic);
-        } else {
-            // Fallback if stats missing (shouldn't happen)
-            p1.ratingChange = 0; p1.newRating = 1000;
-            p2.ratingChange = 0; p2.newRating = 1000;
         }
 
-        await game.save();
+        // Atomic Update of Game Result
+        // We construct the update object dynamically
+        // Note: mongoose maps might be tricky, but players array is fixed index.
+        const finalizedGame = await Game.findByIdAndUpdate(
+            game._id,
+            {
+                $set: {
+                    status: "FINISHED",
+                    endTime: new Date(),
+                    "players.0.result": p1.result,
+                    "players.0.ratingChange": p1Change,
+                    "players.0.newRating": p1NewRating,
+                    "players.1.result": p2.result,
+                    "players.1.ratingChange": p2Change,
+                    "players.1.newRating": p2NewRating
+                }
+            },
+            { new: true }
+        );
 
         io.to(game._id.toString()).emit("game_over", {
-            gameId: game._id.toString(), // Fix: Ensure string ID
+            gameId: game._id.toString(),
             winnerId: p1.result === "win" ? p1.userId : (p2.result === "win" ? p2.userId : null),
             results: {
                 [p1.userId]: { score: p1.score, result: p1.result },
@@ -243,6 +270,64 @@ async function checkGameFinished(io, game) {
         console.log(`Game Finished: ${game._id}`);
     }
 }
+
+/**
+ * Handle Game Sync (Reconnection/Refresh)
+ */
+export const handleGameSync = async (io, socket, data) => {
+    const { gameId } = data;
+    const userId = getUserIdFromSocket(socket);
+
+    if (!userId || !gameId) return;
+
+    try {
+        const game = await Game.findById(gameId)
+            .populate("players.userId", "name avatar")
+            .populate({
+                path: "questions.questionId",
+                select: "description options type difficulty timeLimit"
+            });
+
+        if (!game || game.status !== "IN_PROGRESS") {
+            return socket.emit("error", { message: "Game not found or finished" });
+        }
+
+        const player = game.players.find(p => p.userId._id.toString() === userId);
+        if (!player) return;
+
+        // Re-join the socket room
+        socket.join(gameId);
+
+        // Determine sync state
+        const currentIndex = player.answers.length;
+        // Check if finished
+        if (currentIndex >= game.questions.length) {
+            return; // Or emit game over state if needed
+        }
+
+        // Send Sync Event
+        socket.emit("game_sync", {
+            gameId: game._id,
+            status: game.status,
+            currentQuestionIndex: currentIndex,
+            currentRoundStartTime: game.currentRoundStartTime,
+            players: game.players.map(p => ({
+                userId: p.userId._id,
+                name: p.userId.name,
+                avatar: p.userId.avatar,
+                score: p.score
+            })),
+            // Send questions minimal info if needed, or rely on client having them
+            // Client usually fetches game details on load, so we just need to set the index and time.
+            questions: game.questions // Pass full questions including timeLimit overrides
+        });
+
+        console.log(`Synced User ${userId} to Game ${gameId} at Index ${currentIndex}`);
+
+    } catch (error) {
+        console.error("Game Sync Error:", error);
+    }
+};
 
 // Helper to extract user ID from socket (needs middleware/tracking)
 function getUserIdFromSocket(socket) {

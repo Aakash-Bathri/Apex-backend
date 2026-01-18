@@ -1,6 +1,6 @@
 import { Server } from "socket.io";
 import { handleJoinQueue, handleCreatePrivate, handleJoinPrivate } from "./matchmakingService.js";
-import { handleSubmitAnswer } from "./gameLogicService.js";
+import { handleSubmitAnswer, handleGameSync } from "./gameLogicService.js";
 import jwt from "jsonwebtoken";
 
 let io;
@@ -43,6 +43,7 @@ export const initSocket = (httpServer) => {
         socket.on("join_private", (data) => handleJoinPrivate(io, socket, { ...data, userId: socket.userId }));
 
         // Gameplay Events
+        socket.on("join_game", (data) => handleGameSync(io, socket, data));
         socket.on("submit_answer", (data) => handleSubmitAnswer(io, socket, data));
 
         socket.on("disconnect", () => {

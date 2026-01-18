@@ -9,7 +9,7 @@ export const adminLogin = async (req, res) => {
     if (username === ADMIN_USER && password === ADMIN_PASS) {
         const token = jwt.sign(
             { role: "admin", username: username },
-            process.env.JWT_SECRET,
+            process.env.JWT_ADMIN_SECRET,
             { expiresIn: "1d" }
         );
         return res.json({ token });
