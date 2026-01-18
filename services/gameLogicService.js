@@ -337,7 +337,7 @@ function getUserIdFromSocket(socket) {
 }
 
 // Elo Helper
-function calculateElo(rating1, rating2, result1) {
+export function calculateElo(rating1, rating2, result1) {
     const K = 32;
     const expected1 = 1 / (1 + Math.pow(10, (rating2 - rating1) / 400));
 
@@ -357,7 +357,8 @@ function calculateElo(rating1, rating2, result1) {
 }
 
 // Stats Update Helper
-async function updateUserStats(stats, result, ratingChange, topic) {
+// Export for use in matchmaking forfeit logic
+export async function updateUserStats(stats, result, ratingChange, topic) {
     stats.overall.gamesPlayed += 1;
     stats.overall.rating += ratingChange;
 

@@ -1,9 +1,11 @@
 import { Game } from "../config/Game.js";
 import { Question } from "../config/Question.js";
+import { UserStats } from "../config/UserStats.js";
 import crypto from "crypto";
 
 import { connectedUsers } from "./socketService.js";
 import { getQuestionTimeLimit } from "../utils/gameRules.js";
+import { calculateElo, updateUserStats } from "./gameLogicService.js";
 
 // In-memory queue: { userId, socketId, rating, topic, joinedAt }
 const publicQueue = [];
@@ -45,11 +47,40 @@ const abortActiveGames = async (io, userId) => {
         });
 
         for (const game of activeGames) {
-            console.log(`Aborting game ${game._id} for user ${userId}`);
+            console.log(`⚠️ FORFEIT: Player ${userId} abandoned game ${game._id}`);
+
+            // FORFEIT PENALTY SYSTEM
+            const abandoner = game.players.find(p => p.userId.toString() === userId);
+            const opponent = game.players.find(p => p.userId.toString() !== userId);
+
+            if (abandoner && opponent) {
+                abandoner.result = "loss";
+                opponent.result = "win";
+
+                const abandonerStats = await UserStats.findOne({ userId: abandoner.userId });
+                const opponentStats = await UserStats.findOne({ userId: opponent.userId });
+
+                let abandonerChange = -30; // Harsh penalty
+                let opponentChange = 20;   // Reward
+
+                if (abandonerStats && opponentStats) {
+                    const elo = calculateElo(abandonerStats.overall.rating, opponentStats.overall.rating, "loss");
+                    abandonerChange = Math.min(elo.p1Change, -15);
+                    opponentChange = Math.max(elo.p2Change, 10);
+
+                    await updateUserStats(abandonerStats, "loss", abandonerChange, game.topic);
+                    await updateUserStats(opponentStats, "win", opponentChange, game.topic);
+                }
+
+                abandoner.ratingChange = abandonerChange;
+                abandoner.newRating = (abandonerStats?.overall?.rating || 1000) + abandonerChange;
+                opponent.ratingChange = opponentChange;
+                opponent.newRating = (opponentStats?.overall?.rating || 1000) + opponentChange;
+            }
 
             // Update game status
             game.status = "ABORTED";
-            game.abortReason = `Player ${userId} abandoned the game`;
+            game.abortReason = `Forfeited by ${userId}`;
             game.endTime = new Date();
             await game.save();
 
@@ -63,7 +94,7 @@ const abortActiveGames = async (io, userId) => {
 
             // Notify all players in the game room
             io.to(game._id.toString()).emit("game_aborted", {
-                message: "Your opponent has left the game",
+                message: opponent ? "🎉 Opponent forfeited! You win!" : "Game aborted",
                 gameId: game._id.toString()
             });
 
@@ -215,7 +246,11 @@ export const handleJoinPrivate = async (io, socket, data) => {
 
         // Select Questions
         const questions = await selectQuestions(game.topic, game.category);
-        game.questions = questions.map(q => ({ questionId: q._id }));
+        game.questions = questions.map(q => ({
+            questionId: q._id,
+            timeLimit: getQuestionTimeLimit(q.difficulty) || 30
+        }));
+        game.currentRoundStartTime = new Date();
 
         await game.save();
 
@@ -240,9 +275,11 @@ export const handleJoinPrivate = async (io, socket, data) => {
                 title: q.title,
                 description: q.description,
                 options: q.options.map(o => ({ text: o.text })),
-                type: q.type
+                type: q.type,
+                timeLimit: getQuestionTimeLimit(q.difficulty) || 30
             })),
-            startTime: game.startTime
+            startTime: game.startTime,
+            currentRoundStartTime: game.currentRoundStartTime
         });
 
     } catch (error) {
@@ -267,7 +304,10 @@ async function createGameSession(io, players, topic, category) {
             players: players.map(p => ({ userId: p.userId, socketId: p.socketId })),
             topic: topic,
             category: category || "CS",
-            questions: questions.map(q => ({ questionId: q._id })),
+            questions: questions.map(q => ({
+                questionId: q._id,
+                timeLimit: getQuestionTimeLimit(q.difficulty) || 30
+            })),
             startTime: new Date(),
             currentRoundStartTime: new Date()
         });
@@ -295,7 +335,8 @@ async function createGameSession(io, players, topic, category) {
                 type: q.type,
                 timeLimit: getQuestionTimeLimit(q.difficulty) || 30
             })),
-            startTime: game.startTime
+            startTime: game.startTime,
+            currentRoundStartTime: game.currentRoundStartTime
         });
 
         console.log(`Game started: ${gameId}`);
