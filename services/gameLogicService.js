@@ -53,10 +53,10 @@ export const handleSubmitAnswer = async (io, socket, data) => {
         // 4. Calculate Points
         let points = 0;
         if (isCorrect) {
-            const bonus = Math.max(0, ((timeLimit - timeTaken) / timeLimit) * 50);
+            const bonus = Math.max(0, ((timeLimit - timeTaken) / timeLimit) * 20);
             points = 100 + Math.round(bonus);
         } else {
-            points = -20;
+            points = -50;
         }
 
         console.log(`[Submit] User: ${userId}, Q: ${questionId}, Valid: ${isCorrect}, Time: ${timeTaken}s, Pts: ${points}`);
