@@ -1,9 +1,18 @@
 import mongoose from "mongoose";
 
+// Debugging: Check which variable is being used
+if (process.env.DATABASE_URL) {
+  console.log("Found DATABASE_URL, attempting connection...");
+} else if (process.env.MONGO_URI) {
+  console.log("Found MONGO_URI, attempting connection...");
+} else {
+  console.log("⚠️ WARNING: No database environment variables found. Falling back to localhost.");
+}
+
 const dbUrl = process.env.DATABASE_URL || process.env.MONGO_URI || "mongodb://localhost:27017/passport-google";
 
 mongoose.connect(dbUrl)
-  .then(() => console.log(`✅ MongoDB connected to ${dbUrl}`))
+  .then(() => console.log(`✅ MongoDB connected successfully`)) // Don't log full URL for security in prod
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 const userSchema = new mongoose.Schema(
