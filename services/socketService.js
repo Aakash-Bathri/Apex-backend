@@ -63,9 +63,14 @@ export const initSocket = (httpServer) => {
     return io;
 };
 
+
 export const getIO = () => {
     if (!io) {
         throw new Error("Socket.io not initialized!");
     }
     return io;
+};
+
+export const getOnlineUserCount = () => {
+    return connectedUsers.size;
 };

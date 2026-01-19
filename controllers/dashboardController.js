@@ -1,6 +1,7 @@
 import User from "../config/database.js";
 import { UserStats } from "../config/UserStats.js";
 import { Game } from "../config/Game.js";
+import { getOnlineUserCount } from "../services/socketService.js";
 
 export const getDashboard = async (req, res) => {
   try {
@@ -20,6 +21,11 @@ export const getDashboard = async (req, res) => {
       { userId: userId },
       { overall: 1, topics: 1, _id: 0 }
     ).lean();
+
+    // Get Active Stats
+    const onlineUsers = getOnlineUserCount();
+    const activeGamesCount = await Game.countDocuments({ status: "IN_PROGRESS" });
+    const activePlayers = activeGamesCount * 2; // Approximation
 
     // Get Recent Matches (History)
     // Only fetch FINISHED matches to ensure valid opponent data
@@ -55,13 +61,13 @@ export const getDashboard = async (req, res) => {
 
       // Debug log for troubleshooting "Unknown" issue
       if (!opponentInfo) {
-        console.log(
-          `[Dashboard] Match ${match._id}: Opponent missing. Players:`,
-          match.players.map((p) => ({
-            id: p.userId ? p.userId._id : "null",
-            name: p.userId ? p.userId.name : "null",
-          }))
-        );
+        // console.log(
+        //   `[Dashboard] Match ${match._id}: Opponent missing. Players:`,
+        //   match.players.map((p) => ({
+        //     id: p.userId ? p.userId._id : "null",
+        //     name: p.userId ? p.userId.name : "null",
+        //   }))
+        // );
       }
 
       // If for some reason playerInfo is missing (shouldn't happen if query used userId), skip or handle
@@ -100,6 +106,8 @@ export const getDashboard = async (req, res) => {
     return res.json({
       user,
       stats,
+      onlineUsers,
+      activePlayers,
       matches: formattedMatches,
       ratingHistory,
     });
