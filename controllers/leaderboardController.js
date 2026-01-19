@@ -5,17 +5,17 @@ import { Game } from "../config/Game.js";
 export const getLeaderboard = async (req, res) => {
     try {
         const {
-            page = 1,
-            limit = 50,
             timeframe = "all-time", // all-time, monthly, weekly
             filter = "global", // global, friends (friends not implemented yet)
             search = "",
         } = req.query;
 
         const userId = req.user?.id; // May be undefined if not logged in
-        const pageNum = parseInt(page);
-        const limitNum = parseInt(limit);
-        const skip = (pageNum - 1) * limitNum;
+
+        // Enforce top 50 only
+        const pageNum = 1;
+        const limitNum = 50;
+        const skip = 0;
 
         // Build time filter for games
         let dateFilter = {};
