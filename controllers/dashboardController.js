@@ -24,8 +24,30 @@ export const getDashboard = async (req, res) => {
 
     // Get Active Stats
     const onlineUsers = getOnlineUserCount();
-    const activeGamesCount = await Game.countDocuments({ status: "IN_PROGRESS" });
+
+    // Filter out "ghost" games that are stuck in IN_PROGRESS but haven't been updated in 1 hour
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const activeGamesCount = await Game.countDocuments({
+      status: "IN_PROGRESS",
+      updatedAt: { $gte: oneHourAgo }
+    });
     const activePlayers = activeGamesCount * 2; // Approximation
+
+    // Fetch Top 3 Leaderboard
+    const leaderboard = await UserStats.find({})
+      .sort({ "overall.rating": -1 })
+      .limit(3)
+      .populate("userId", "name avatar")
+      .lean()
+      .then((users) =>
+        users.map((u, i) => ({
+          rank: i + 1,
+          userId: u.userId._id,
+          username: u.userId.name,
+          avatar: u.userId.avatar,
+          rating: u.overall.rating || 0,
+        }))
+      );
 
     // Get Recent Matches (History)
     // Only fetch FINISHED matches to ensure valid opponent data
@@ -110,6 +132,7 @@ export const getDashboard = async (req, res) => {
       activePlayers,
       matches: formattedMatches,
       ratingHistory,
+      leaderboard,
     });
   } catch (err) {
     console.error("Dashboard error:", err);
